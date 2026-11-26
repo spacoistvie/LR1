@@ -1,81 +1,151 @@
 /* Context Map TradingCore — Context Mapper DSL (https://contextmapper.org).
    Источник истины контекстной карты; PlantUML-вариант —
-   docs/architecture/context-map.puml (rendered: evidence/context-map.png). */
+   docs/architecture/context-map.puml (rendered: evidence/context-map.png).
+
+   Структура по грамматике CML: ContextMap (contains + связи), затем
+   BoundedContext и Domain/Subdomain как корневые элементы файла. */
 
 ContextMap TradingPlatformToBe {
-    type = SYSTEM_LANDSCAPE;
-    state = TO_BE;
+    type = SYSTEM_LANDSCAPE
+    state = TO_BE
 
     contains APIGatewayContext, OrderManagementContext, MatchingEngineContext,
-             MarketDataContext, AccountsAndBillingContext, RiskAndComplianceContext,
-             NotificationContext, BankingGatewayContext, ExternalBankingLedger,
-             LegacyStatementSystem, EmailSmsGateway;
+            MarketDataContext, AccountsAndBillingContext, RiskAndComplianceContext,
+            NotificationContext, BankingGatewayContext, ExternalBankingLedger,
+            LegacyStatementSystem, EmailSmsGateway
 
-    /* Core domain платформы — торговля и матчинг */
-    BoundedContext OrderManagementContext implements TradingSubdomain {
-        type = CORE_DOMAIN;
-        domainVisionStatement = "Приём, валидация и трекинг приказов клиента; публикует события OrderAccepted/OrderCancelled высокой частоты.";
-    }
-    BoundedContext MatchingEngineContext implements TradingSubdomain {
-        type = CORE_DOMAIN;
-        domainVisionStatement = "Матчинг заявок и ведение инкрементального стакана (Order Book): 100 000 ops/s, t(p99) < 5 ms.";
-    }
+    /* ---- Отношения ----
+       Конвенция CML: стрелка -> идёт от upstream к downstream.
+       Роли upstream: OHS, PL; роли downstream: ACL, CF.
+       SK — симметричная связь: [SK]<->[SK].
+       Имя связи — идентификатор CML, протокол вынесен в
+       implementationTechnology. */
 
-    /* ---- Отношения Customer/Supplier + интеграционные паттерны ---- */
-    /* Конвенция CML: стрелка -> идёт от upstream к downstream.
-       Роли upstream: OHS, PL. Роли downstream: ACL, CF.
-       SK — симметричная связь: [SK]<->[SK]. */
-    OrderManagementContext [U,OHS,PL] -> [D] MatchingEngineContext : PlaceOrder / CancelOrder (Kafka, at-least-once);
-    OrderManagementContext [U,PL] -> [D] RiskAndComplianceContext : OrderAccepted (Kafka) / PreTradeValidation (gRPC sync);
-    MatchingEngineContext [U,PL] -> [D] AccountsAndBillingContext : TradeExecuted (Kafka);
-    MatchingEngineContext [U,OHS,PL] -> [D] MarketDataContext : TradeExecuted / BookUpdated (Kafka);
-    AccountsAndBillingContext [SK]<->[SK] RiskAndComplianceContext : SharedLedgerSchema (балансы/экспозиция);
-    MarketDataContext [U,PL] -> [D] NotificationContext : MarketAlert (Kafka);
-    AccountsAndBillingContext [D] <- [U] BankingGatewayContext : Transfer / Statement (HTTPS);
-    ExternalBankingLedger [U] -> [D,ACL] BankingGatewayContext : Vendor Banking API (HTTPS);
-    LegacyStatementSystem [U] -> [D,ACL] BankingGatewayContext : Legacy Statements (SOAP);
-    NotificationContext [U,OHS] -> [D] EmailSmsGateway : NotifyRequested (HTTPS);
+    /* Публичный шлюз — upstream для приёма приказов (OHS). */
+    APIGatewayContext [U,OHS] -> [D] OrderManagementContext : ClientOrders {
+        implementationTechnology = "HTTPS/REST, WebSocket, FIX"
+    }
+    OrderManagementContext [U,OHS,PL] -> [D] MatchingEngineContext : PlaceOrderCancelOrder {
+        implementationTechnology = "Kafka, at-least-once"
+    }
+    OrderManagementContext [U,PL] -> [D] RiskAndComplianceContext : OrderAcceptedPreTradeValidation {
+        implementationTechnology = "Kafka, gRPC"
+    }
+    MatchingEngineContext [U,PL] -> [D] AccountsAndBillingContext : TradeExecuted {
+        implementationTechnology = "Kafka"
+    }
+    MatchingEngineContext [U,OHS,PL] -> [D] MarketDataContext : TradeExecutedBookUpdated {
+        implementationTechnology = "Kafka"
+    }
+    AccountsAndBillingContext [SK]<->[SK] RiskAndComplianceContext : SharedLedgerSchema
+    MarketDataContext [U,PL] -> [D] NotificationContext : MarketAlert {
+        implementationTechnology = "Kafka"
+    }
+    AccountsAndBillingContext [D] <- [U] BankingGatewayContext : TransferStatement {
+        implementationTechnology = "HTTPS"
+    }
+    ExternalBankingLedger [U] -> [D,ACL] BankingGatewayContext : VendorBankingAPI {
+        implementationTechnology = "HTTPS"
+    }
+    LegacyStatementSystem [U] -> [D,ACL] BankingGatewayContext : LegacyStatements {
+        implementationTechnology = "SOAP"
+    }
+    /* Внешний e-mail/SMS-провайдер — upstream (OHS), нотификации — downstream. */
+    EmailSmsGateway [U,OHS] -> [D] NotificationContext : NotifyRequested {
+        implementationTechnology = "HTTPS"
+    }
+}
 
-    BoundedContext APIGatewayContext implements TradingSubdomain {
-        type = SUPPORTING_SUBDOMAIN;
-        domainVisionStatement = "Публичные каналы входа: Web/Mobile/API, аутентификация JWT/mTLS, rate limiting, FIX-шлюз для HFT.";
-    }
-    BoundedContext MarketDataContext implements TradingSubdomain {
-        type = SUPPORTING_SUBDOMAIN;
-        domainVisionStatement = "Open Host Service для рыночных данных: трейды, глубина стакана, свечи; история в ClickHouse.";
-    }
-    BoundedContext AccountsAndBillingContext implements AccountSubdomain {
-        type = GENERIC_SUBDOMAIN;
-        domainVisionStatement = "Счета, double-entry ledger, балансы, комиссии, крипто/FIAT расчёты.";
-    }
-    BoundedContext RiskAndComplianceContext implements RiskSubdomain {
-        type = GENERIC_SUBDOMAIN;
-        domainVisionStatement = "Превентивные лимиты, маржинальные правила, экспозиция, KYC/AML политики.";
-    }
-    BoundedContext NotificationContext implements NotificationSubdomain {
-        type = GENERIC_SUBDOMAIN;
-        domainVisionStatement = "Мультиканальная доставка нотификаций: e-mail, SMS, push, мессенджеры.";
-    }
-    BoundedContext BankingGatewayContext implements AccountSubdomain {
-        type = SUPPORTING_SUBDOMAIN;
-        domainVisionStatement = "Адаптация внешних платёжных сервисов к внутреннему протоколу платформы (ACL).";
-    }
-    BoundedContext ExternalBankingLedger implements AccountSubdomain {
-        type = OTHER_SUBDOMAIN;
-        domainVisionStatement = "Внешний вендорский банковский сервис ввода/вывода FIAT.";
-    }
-    BoundedContext LegacyStatementSystem implements AccountSubdomain {
-        type = OTHER_SUBDOMAIN;
-        domainVisionStatement = "Устаревшая система выписок по счетам (SOAP).";
-    }
-    BoundedContext EmailSmsGateway implements NotificationSubdomain {
-        type = OTHER_SUBDOMAIN;
-        domainVisionStatement = "Внешние e-mail/SMS провайдеры.";
-    }
+/* ---- Bounded Contexts (корневые элементы) ----
+   Тип BC в CML: APPLICATION (внутренние сервисы) либо SYSTEM (внешние системы).
+   Стратегическая классификация (Core / Supporting / Generic) задаётся
+   поддоменами ниже; она же подписана на PlantUML-карте. */
 
-    /* ---- Поддомены ---- */
-    Subdomain TradingSubdomain { type = CORE_DOMAIN; entities = [Order, LimitOrder, MarketOrder, OrderBook, PriceLevel, Trade, Fill]; }
-    Subdomain AccountSubdomain { type = GENERIC_SUBDOMAIN; entities = [Account, BalanceEntry, FeePolicy]; }
-    Subdomain RiskSubdomain { type = GENERIC_SUBDOMAIN; entities = [ExposureProfile, ComplianceRule]; }
-    Subdomain NotificationSubdomain { type = GENERIC_SUBDOMAIN; entities = [NotificationEvent, Channel]; }
+/* Core Domain — торговля и матчинг */
+BoundedContext OrderManagementContext implements TradingSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Приём, валидация и трекинг приказов клиента; публикует события OrderAccepted/OrderCancelled высокой частоты."
+}
+BoundedContext MatchingEngineContext implements TradingSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Матчинг заявок и ведение инкрементального стакана (Order Book): 100 000 ops/s, t(p99) < 5 ms."
+}
+
+/* Supporting — публичные каналы, рыночные данные, платёжный адаптер */
+BoundedContext APIGatewayContext implements TradingSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Публичные каналы входа: Web/Mobile/API, аутентификация JWT/mTLS, rate limiting, FIX-шлюз для HFT."
+}
+BoundedContext MarketDataContext implements TradingSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Open Host Service для рыночных данных: трейды, глубина стакана, свечи; история в ClickHouse."
+}
+BoundedContext BankingGatewayContext implements AccountSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Адаптация внешних платёжных сервисов к внутреннему протоколу платформы (ACL)."
+}
+
+/* Generic — счета, риски, нотификации */
+BoundedContext AccountsAndBillingContext implements AccountSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Счета, double-entry ledger, балансы, комиссии, крипто/FIAT расчёты."
+}
+BoundedContext RiskAndComplianceContext implements RiskSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Превентивные лимиты, маржинальные правила, экспозиция, KYC/AML политики."
+}
+BoundedContext NotificationContext implements NotificationSubdomain {
+    type = APPLICATION
+    domainVisionStatement = "Мультиканальная доставка нотификаций: e-mail, SMS, push, мессенджеры."
+}
+
+/* Внешние вендорские системы (в прежней модели OTHER_SUBDOMAIN —
+   не существует в перечислении типов CML): SYSTEM. */
+BoundedContext ExternalBankingLedger implements AccountSubdomain {
+    type = SYSTEM
+    domainVisionStatement = "Внешний вендорский банковский сервис ввода/вывода FIAT."
+}
+BoundedContext LegacyStatementSystem implements AccountSubdomain {
+    type = SYSTEM
+    domainVisionStatement = "Устаревшая система выписок по счетам (SOAP)."
+}
+BoundedContext EmailSmsGateway implements NotificationSubdomain {
+    type = SYSTEM
+    domainVisionStatement = "Внешние e-mail/SMS провайдеры."
+}
+
+/* ---- Домен и поддомены (корневой элемент Domain) ---- */
+Domain TradingCoreDomain {
+    domainVisionStatement = "Криптотрейдинговая платформа: торговля, расчёты, риск-контроль и нотификации."
+
+    Subdomain TradingSubdomain {
+        type = CORE_DOMAIN
+        domainVisionStatement = "Приказы, стакан, трейды — источник конкурентного преимущества платформы."
+        Entity Order
+        Entity LimitOrder
+        Entity MarketOrder
+        Entity OrderBook
+        Entity PriceLevel
+        Entity Trade
+        Entity Fill
+    }
+    Subdomain AccountSubdomain {
+        type = GENERIC_SUBDOMAIN
+        domainVisionStatement = "Счета, балансы и комиссии."
+        Entity Account
+        Entity BalanceEntry
+        Entity FeePolicy
+    }
+    Subdomain RiskSubdomain {
+        type = GENERIC_SUBDOMAIN
+        domainVisionStatement = "Экспозиция и правила комплаенса."
+        Entity ExposureProfile
+        Entity ComplianceRule
+    }
+    Subdomain NotificationSubdomain {
+        type = GENERIC_SUBDOMAIN
+        domainVisionStatement = "События и каналы доставки нотификаций."
+        Entity NotificationEvent
+        Entity Channel
+    }
 }

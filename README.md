@@ -63,7 +63,7 @@ Transaction Outbox, replicate в 2 AZ см. [ADR-002](./docs/adr/ADR-002-service
 
 | Элемент по SEI | Содержание |
 |---|---|
-| **Source** | КлиентShop (трейдер), параллельно торгующий через API и Web |
+| **Source** | Клиент (трейдер), параллельно торгующий через API и Web |
 | **Stimulus** | Одновременные операции: вывод средств + 2 параллельные заявки на весь баланс |
 | **Artifact** | Accounts & Billing Service (double-entry ledger), Order Management |
 | **Environment** | Нормальный режим, без нагрузки |
@@ -82,7 +82,7 @@ Transaction Outbox, replicate в 2 AZ см. [ADR-002](./docs/adr/ADR-002-service
 | **Inbound (вход)** | `orders.accepted` от Order Management (Kafka, at-least-once); конфигурация инструментов; идемпотентность по `orderId` |
 | **Outbound (выход)** | `trades.executed`, `book.updated` → Market Data, Accounts (Kafka); gRPC запросы статуса |
 | **Бизнес-инварианты** | 1) Стакан отсортирован по цене-времени (best bid/ask) не нарушается; 2) каждая заявка исполняется ровно один раз (idempotency); 3) сумма Fill по заявке ≤ объём заявки; 4) суммарный объём трейдов за интервал равен исполненному объёму заявок |
-| **Языки/технологии** | Rust + tokio; stash в памяти; append-only аудит в Cassandra |
+| **Языки/технологии** | Rust + tokio; стакан в памяти; append-only аудит в Cassandra |
 
 **Canonical-структура канвы** (для масштабирования): 8-секционный canvas по
 Eric Evans / Vernon: name, strategic classification, domain vision, responsibilities,

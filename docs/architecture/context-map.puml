@@ -26,13 +26,14 @@ package "TradingCore (ContextMap TradingPlatformToBe)" {
 
 package "Supporting / External Systems" {
   rectangle "Banking Gateway Context\n(SUPPORTING)" as banking_ctx
-  rectangle "External Banking Ledger\n(вендорский сервис, OTHER)" as ledger_ctx
-  rectangle "Legacy Statement System\n(SOAP, OTHER)" as legacy_ctx
-  rectangle "E-mail / SMS Gateway\n(OTHER)" as email_ctx
+  rectangle "External Banking Ledger\n(вендорский сервис, SYSTEM)" as ledger_ctx
+  rectangle "Legacy Statement System\n(SOAP, SYSTEM)" as legacy_ctx
+  rectangle "E-mail / SMS Gateway\n(SYSTEM)" as email_ctx
 }
 
 ' --- Отношения из ContextMap (Context Mapper DSL) ---
 ' Стрелка идёт от upstream к downstream; ACL — на стороне downstream, SK — симметричная связь.
+gateway_ctx -[bold]-> order_ctx : U -> D, OHS\nClientOrders (HTTPS/REST, WebSocket, FIX)
 order_ctx -[bold]-> matching_ctx : U -> D, OHS/PL\nPlaceOrder/Cancel (Kafka)\nCustomer-Supplier
 order_ctx -[bold]-> risk_ctx : U -> D, PL\nOrderAccepted / PreTradeValidation
 matching_ctx -[bold]-> md_ctx : U -> D, OHS/PL\nTradeExecuted / BookUpdated (Kafka)
@@ -42,7 +43,7 @@ md_ctx -[bold]-> notify_ctx : U -> D, PL\nMarketAlert (Kafka)
 banking_ctx -[bold]-> accounts_ctx : U -> D\nTransfer / Statement (HTTPS)
 ledger_ctx -[bold]-> banking_ctx : U -> D, ACL\nVendor Banking API (HTTPS)
 legacy_ctx -[bold]-> banking_ctx : U -> D, ACL\nLegacy Statements (SOAP)
-notify_ctx -[bold]-> email_ctx : U -> D, OHS\nNotifyRequested (HTTPS)
+email_ctx -[bold]-> notify_ctx : U -> D, OHS\nNotifyRequested (HTTPS)
 
 note bottom of ledger_ctx
 ACL — на стороне Banking Gateway:
